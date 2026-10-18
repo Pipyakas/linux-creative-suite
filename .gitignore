@@ -1,0 +1,14 @@
+# Deny by default: this checkout also holds local installer media, prefixes' probe logs and raw
+# notes that must never be published. Only the curated trees below are tracked.
+/*
+!/.gitignore
+!/README.md
+!/LICENSE
+!/docs/
+!/patches/
+!/scripts/
+!/config/
+!/tools/
+# local-only config (real install paths, term lists)
+/config/*.local*
+/config/forbidden-terms*

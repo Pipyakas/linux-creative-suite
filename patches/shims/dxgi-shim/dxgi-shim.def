@@ -1,0 +1,10 @@
+; dxgi-shim.def -- the same five exports, with the same ordinals, as DXVK's own dxgi.def.
+; Matching the ordinals matters: anything that imported DXVK's dxgi by ordinal (rather
+; than by name) has to keep resolving to the same function through the shim.
+LIBRARY dxgi.dll
+EXPORTS
+    CreateDXGIFactory @9
+    CreateDXGIFactory1 @10
+    CreateDXGIFactory2 @11
+    DXGIDeclareAdapterRemovalSupport @16
+    DXGIGetDebugInterface1 @17

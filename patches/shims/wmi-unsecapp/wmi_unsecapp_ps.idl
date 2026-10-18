@@ -1,0 +1,79 @@
+/*
+ * wmi-unsecapp-ps.idl -- IDL for the proxy/stub of the Unsecured Apartment
+ * interfaces, so a *cross-process* client of wmi-unsecapp-srv.exe can be
+ * handed a real proxy.
+ *
+ * Why this file exists
+ * --------------------
+ * wmi-unsecapp.dll/srv.exe implement CLSID {49bd2028-...}.  Creating the
+ * object out-of-process works, but the *interfaces* cannot cross the process
+ * boundary without a proxy/stub: Wine's standard marshaler has no
+ * IPSFactoryBuffer for IID_IUnsecuredApartment / IID_IWbemUnsecuredApartment,
+ * so CoCreateInstance returns E_NOINTERFACE with
+ *
+ *   err:ole:StdMarshalImpl_MarshalInterface Failed to create ifstub, hr 0x80004002
+ *
+ * Definitions are taken from Wine's own wbemcli.idl (which mirrors the WMI
+ * SDK), with two deliberate differences:
+ *
+ *   - [restricted] is dropped.  It means "this interface is never marshaled",
+ *     which is exactly what we are doing here; widl refuses to generate a
+ *     proxy/stub for a restricted interface, and the attribute has no wire
+ *     effect either way.
+ *   - only the three interfaces needed for this CLSID are declared, rather
+ *     than importing all of wbemcli.idl and generating stubs for the whole
+ *     WMI surface.
+ *   - IWbemObjectSink's object parameters are declared as IUnknown pointers
+ *     rather than IWbemClassObject pointers, so that the proxy/stub does not drag in
+ *     the whole IWbemClassObject surface (and, more importantly, does not
+ *     then depend
+ *     on Wine shipping a proxy/stub for IWbemClassObject, which it does not).  Both
+ *     are interface pointers of the same size, and NDR marshals them
+ *     identically, so this is ABI- and wire-compatible; the IID of the
+ *     interface being marshalled travels with each pointer.
+ *
+ * Build: see build.sh (target wmi-unsecapp-ps.dll).
+ */
+
+import "unknwn.idl";
+
+[
+    object,
+    uuid(7c857801-7381-11cf-884d-00aa004b2e24)
+]
+interface IWbemObjectSink : IUnknown
+{
+    HRESULT Indicate(
+        [in] long lObjectCount,
+        [in, size_is(lObjectCount)] IUnknown **apObjArray);
+
+    HRESULT SetStatus(
+        [in] long lFlags,
+        [in] HRESULT hResult,
+        [in, unique, string] LPWSTR strParam,
+        [in, unique] IUnknown *pObjParam);
+}
+
+[
+    object,
+    uuid(1cfaba8c-1523-11d1-ad79-00c04fd8fdff)
+]
+interface IUnsecuredApartment : IUnknown
+{
+    HRESULT CreateObjectStub(
+        [in] IUnknown *object,
+        [out] IUnknown **stub);
+}
+
+[
+    object,
+    uuid(31739d04-3471-4cf4-9a7c-57a44ae71956)
+]
+interface IWbemUnsecuredApartment : IUnsecuredApartment
+{
+    HRESULT CreateSinkStub(
+        [in] IWbemObjectSink *sink,
+        [in] DWORD flags,
+        [in, unique] const WCHAR *reserved,
+        [out] IWbemObjectSink **stub);
+}

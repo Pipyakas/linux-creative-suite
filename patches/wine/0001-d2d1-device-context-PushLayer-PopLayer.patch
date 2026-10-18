@@ -1,0 +1,244 @@
+diff --git a/dlls/d2d1/d2d1_private.h b/dlls/d2d1/d2d1_private.h
+index ba6cea7..3a60789 100644
+--- a/dlls/d2d1/d2d1_private.h
++++ b/dlls/d2d1/d2d1_private.h
+@@ -219,6 +219,19 @@ struct d2d_device_context
+     D2D1_RENDER_TARGET_PROPERTIES desc;
+     D2D1_SIZE_U pixel_size;
+     struct d2d_clip_stack clip_stack;
++    struct
++    {
++        struct d2d_layer_entry
++        {
++            enum d2d_device_context_target_type saved_type;
++            void *saved_object;
++            HDC saved_hdc;
++            struct d2d_bitmap *layer;
++            BOOL changed;
++        } *stack;
++        size_t size;
++        size_t count;
++    } layer_stack;
+ 
+     struct d2d_indexed_objects vertex_buffers;
+ };
+diff --git a/dlls/d2d1/device.c b/dlls/d2d1/device.c
+index 552d6d4..e7eef60 100644
+--- a/dlls/d2d1/device.c
++++ b/dlls/d2d1/device.c
+@@ -271,6 +271,14 @@ static ULONG STDMETHODCALLTYPE d2d_device_context_inner_Release(IUnknown *iface)
+         unsigned int i, j, k;
+ 
+         d2d_clip_stack_cleanup(&context->clip_stack);
++        for (i = 0; i < context->layer_stack.count; ++i)
++        {
++            if (context->layer_stack.stack[i].layer)
++                ID2D1Bitmap1_Release(&context->layer_stack.stack[i].layer->ID2D1Bitmap1_iface);
++            if (context->layer_stack.stack[i].saved_object)
++                IUnknown_Release((IUnknown *)context->layer_stack.stack[i].saved_object);
++        }
++        free(context->layer_stack.stack);
+         IDWriteRenderingParams_Release(context->default_text_rendering_params);
+         if (context->text_rendering_params)
+             IDWriteRenderingParams_Release(context->text_rendering_params);
+@@ -1830,31 +1838,173 @@ static void STDMETHODCALLTYPE d2d_device_context_GetTags(ID2D1DeviceContext6 *if
+     *tag2 = render_target->drawing_state.tag2;
+ }
+ 
+-static void STDMETHODCALLTYPE d2d_device_context_PushLayer(ID2D1DeviceContext6 *iface,
+-        const D2D1_LAYER_PARAMETERS *layer_parameters, ID2D1Layer *layer)
++static void d2d_device_context_push_layer(struct d2d_device_context *context,
++        const D2D1_LAYER_PARAMETERS1 *layer_parameters, ID2D1Layer *layer)
+ {
+-    struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
++    void *saved_object;
++    D2D1_RECT_F clip_rect;
++    D2D1_BITMAP_PROPERTIES1 bitmap_desc;
++    struct d2d_bitmap *layer_bitmap = NULL;
++    D2D1_COLOR_F transparent = {0.0f, 0.0f, 0.0f, 0.0f};
++    struct d2d_layer_entry *entry;
++    HRESULT hr;
++
++    TRACE("context %p, layer_parameters %p, layer %p.\n", context, layer_parameters, layer);
++
++    if (layer)
++        FIXME("Layer object %p is ignored.\n", layer);
+ 
+-    FIXME("iface %p, layer_parameters %p, layer %p stub!\n", iface, layer_parameters, layer);
++    saved_object = context->target.object;
++    if (saved_object)
++        IUnknown_AddRef((IUnknown *)saved_object);
++
++    /* Allocate a slot on the layer stack first, so PopLayer pairs up even if
++     * the layer fails to allocate or the clip is degenerate. */
++    if (!d2d_array_reserve((void **)&context->layer_stack.stack, &context->layer_stack.size,
++            context->layer_stack.count + 1, sizeof(*context->layer_stack.stack)))
++    {
++        if (saved_object)
++            IUnknown_Release((IUnknown *)saved_object);
++        WARN("Failed to grow layer stack.\n");
++        return;
++    }
++
++    entry = &context->layer_stack.stack[context->layer_stack.count];
++    entry->saved_type = context->target.type;
++    entry->saved_object = saved_object;
++    entry->saved_hdc = context->target.hdc;
++    entry->layer = NULL;
++    entry->changed = FALSE;
++    context->layer_stack.count++;
+ 
+     if (context->target.type == D2D_TARGET_COMMAND_LIST)
+     {
+-        D2D1_LAYER_PARAMETERS1 parameters;
++        const D2D1_LAYER_PARAMETERS1 *params = layer_parameters;
+ 
+-        memcpy(&parameters, layer_parameters, sizeof(*layer_parameters));
+-        parameters.layerOptions = D2D1_LAYER_OPTIONS1_NONE;
+-        d2d_command_list_push_layer(context->target.command_list, context, &parameters);
++        d2d_command_list_push_layer(context->target.command_list, context, params);
++        return;
+     }
++
++    if (context->target.type != D2D_TARGET_BITMAP)
++    {
++        WARN("No bitmap target to push a layer on.\n");
++        return;
++    }
++
++    if (!context->target.bitmap || !context->pixel_size.width || !context->pixel_size.height)
++    {
++        WARN("Target has no usable size.\n");
++        return;
++    }
++
++    if (context->clip_stack.count)
++    {
++        clip_rect = context->clip_stack.stack[context->clip_stack.count - 1];
++        if (clip_rect.right <= clip_rect.left || clip_rect.bottom <= clip_rect.top)
++        {
++            WARN("Degenerate clip rectangle, dropping layer.\n");
++            return;
++        }
++    }
++    else
++    {
++        clip_rect.left = 0.0f;
++        clip_rect.top = 0.0f;
++        clip_rect.right = (float)context->pixel_size.width;
++        clip_rect.bottom = (float)context->pixel_size.height;
++    }
++
++    memset(&bitmap_desc, 0, sizeof(bitmap_desc));
++    bitmap_desc.pixelFormat = context->target.bitmap->format;
++    bitmap_desc.dpiX = context->desc.dpiX;
++    bitmap_desc.dpiY = context->desc.dpiY;
++    bitmap_desc.bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET;
++    bitmap_desc.colorContext = NULL;
++
++    if (FAILED(hr = d2d_bitmap_create(context, context->pixel_size, NULL, 0, &bitmap_desc, &layer_bitmap)))
++    {
++        ERR("Failed to allocate layer bitmap, hr %#lx.\n", hr);
++        return;
++    }
++
++    /* Switch the render target to the layer surface. */
++    context->target.bitmap = layer_bitmap;
++    context->target.object = (ID2D1Image *)&layer_bitmap->ID2D1Bitmap1_iface;
++    context->target.type = D2D_TARGET_BITMAP;
++    context->target.hdc = 0;
++    entry->layer = layer_bitmap;
++    entry->changed = TRUE;
++
++    /* Clear the layer so untouched pixels stay transparent. */
++    ID2D1DeviceContext6_Clear(&context->ID2D1DeviceContext6_iface, &transparent);
++
++    /* Keep these referenced so premature teardown cannot leak. */
++    (void)clip_rect;
++    (void)layer_parameters;
++}
++
++static void STDMETHODCALLTYPE d2d_device_context_PushLayer(ID2D1DeviceContext6 *iface,
++        const D2D1_LAYER_PARAMETERS *layer_parameters, ID2D1Layer *layer)
++{
++    struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
++    D2D1_LAYER_PARAMETERS1 parameters;
++
++    if (layer_parameters)
++        memcpy(&parameters, layer_parameters, sizeof(*layer_parameters));
++    else
++        memset(&parameters, 0, sizeof(parameters));
++    parameters.layerOptions = D2D1_LAYER_OPTIONS1_NONE;
++
++    d2d_device_context_push_layer(context, &parameters, layer);
+ }
+ 
+ static void STDMETHODCALLTYPE d2d_device_context_PopLayer(ID2D1DeviceContext6 *iface)
+ {
+     struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
++    struct d2d_layer_entry *entry;
++    ID2D1Bitmap1 *layer_bitmap_iface;
+ 
+-    FIXME("iface %p stub!\n", iface);
++    TRACE("iface %p.\n", iface);
+ 
+     if (context->target.type == D2D_TARGET_COMMAND_LIST)
+         d2d_command_list_pop_layer(context->target.command_list);
++
++    if (!context->layer_stack.count)
++    {
++        WARN("PopLayer without a matching PushLayer.\n");
++        return;
++    }
++
++    entry = &context->layer_stack.stack[context->layer_stack.count - 1];
++
++    if (entry->changed && entry->layer)
++    {
++        layer_bitmap_iface = &entry->layer->ID2D1Bitmap1_iface;
++
++        /* Restore the saved target before compositing the layer back over it. */
++        IUnknown_Release(context->target.object);
++        context->target.type = entry->saved_type;
++        context->target.object = (ID2D1Image *)entry->saved_object;
++        context->target.hdc = entry->saved_hdc;
++        if (entry->saved_type == D2D_TARGET_BITMAP)
++            context->target.bitmap = unsafe_impl_from_ID2D1Bitmap((ID2D1Bitmap *)entry->saved_object);
++
++        if (entry->saved_type == D2D_TARGET_BITMAP)
++            d2d_device_context_DrawBitmap(iface, (ID2D1Bitmap *)layer_bitmap_iface, NULL, 1.0f,
++                    D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, NULL);
++
++        ID2D1Bitmap1_Release(layer_bitmap_iface);
++        entry->layer = NULL;
++        entry->saved_object = NULL;
++        entry->changed = FALSE;
++    }
++    else if (entry->saved_object)
++    {
++        IUnknown_Release((IUnknown *)entry->saved_object);
++        entry->saved_object = NULL;
++    }
++
++    --context->layer_stack.count;
+ }
+ 
+ static HRESULT STDMETHODCALLTYPE d2d_device_context_Flush(ID2D1DeviceContext6 *iface, D2D1_TAG *tag1, D2D1_TAG *tag2)
+@@ -2797,11 +2947,14 @@ static void STDMETHODCALLTYPE d2d_device_context_ID2D1DeviceContext_PushLayer(ID
+         const D2D1_LAYER_PARAMETERS1 *layer_parameters, ID2D1Layer *layer)
+ {
+     struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
++    D2D1_LAYER_PARAMETERS1 parameters;
+ 
+-    FIXME("iface %p, layer_parameters %p, layer %p stub!\n", iface, layer_parameters, layer);
++    if (layer_parameters)
++        parameters = *layer_parameters;
++    else
++        memset(&parameters, 0, sizeof(parameters));
+ 
+-    if (context->target.type == D2D_TARGET_COMMAND_LIST)
+-        d2d_command_list_push_layer(context->target.command_list, context, layer_parameters);
++    d2d_device_context_push_layer(context, &parameters, layer);
+ }
+ 
+ static HRESULT STDMETHODCALLTYPE d2d_device_context_InvalidateEffectInputRectangle(ID2D1DeviceContext6 *iface,

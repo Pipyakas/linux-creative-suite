@@ -1,0 +1,32 @@
+diff --git a/src/dxvk/dxvk_presenter.cpp b/src/dxvk/dxvk_presenter.cpp
+index f93ae8d..aa144a0 100644
+--- a/src/dxvk/dxvk_presenter.cpp
++++ b/src/dxvk/dxvk_presenter.cpp
+@@ -218,7 +218,10 @@ namespace dxvk {
+ 
+     if (m_hasSwapchainMaintenance1) {
+       modeInfo.pNext = const_cast<void*>(std::exchange(info.pNext, &modeInfo));
+-      fenceInfo.pNext = const_cast<void*>(std::exchange(info.pNext, &fenceInfo));
++      // TEST: skip the present-fence chain only, to isolate whether passing a
++      // Win32-layer VkFence handle through pFences breaks presentation under
++      // Wine. modeInfo / dynamic present modes remain enabled.
++      // fenceInfo.pNext = const_cast<void*>(std::exchange(info.pNext, &fenceInfo));
+     }
+ 
+     if (m_hasIncrementalPresent && !m_presentRepaint && m_acquireStatus == VK_SUCCESS && rectCount)
+@@ -232,12 +235,9 @@ namespace dxvk {
+     // semaphore and fence signals, still happen if present fails with
+     // normal swapchain errors, such as OUT_OF_DATE or SURFACE_LOST.
+     if (m_hasSwapchainMaintenance1) {
+-      currSync.fenceSignaled = status != VK_ERROR_OUT_OF_DEVICE_MEMORY
+-                            && status != VK_ERROR_OUT_OF_HOST_MEMORY
+-                            && status != VK_ERROR_DEVICE_LOST;
+-
+-      if (m_hasGamescopeFenceSignalBug)
+-        currSync.fenceSignaled = status >= 0;
++      // TEST: no present fence was requested, so never wait on it.
++      (void) status;
++      currSync.fenceSignaled = VK_FALSE;
+     }
+ 
+     if (status >= 0) {

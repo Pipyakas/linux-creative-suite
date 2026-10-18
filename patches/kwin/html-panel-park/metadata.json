@@ -1,0 +1,12 @@
+{
+  "KPlugin": {
+    "Id": "lcs-html-panel-park",
+    "Name": "HTML panel overlay parker (Wine)",
+    "Description": "Park the PDF editor's stuck HTML panel 'Loading...' window so the document window is usable",
+    "License": "MIT",
+    "Version": "1"
+  },
+  "X-Plasma-API": "javascript",
+  "X-Plasma-API-Minimum-Version": "6.0",
+  "KPackageStructure": "KWin/Script"
+}

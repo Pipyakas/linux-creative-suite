@@ -1,0 +1,51 @@
+--- a/dlls/win32u/vulkan.c	2026-10-16 15:02:25.545884269 +0700
++++ b/dlls/win32u/vulkan.c	2026-10-16 15:02:27.564692224 +0700
+@@ -1993,6 +1993,7 @@
+     VkSwapchainKHR swapchains_buffer[16], *swapchains = swapchains_buffer;
+     struct vulkan_device *device = queue->device;
+     const VkSwapchainKHR *client_swapchains;
++    VkFence *present_fences = NULL;
+     VkResult res;
+ 
+     TRACE( "queue %p, present_info %p\n", queue, present_info );
+@@ -2017,6 +2018,31 @@
+     client_swapchains = present_info->pSwapchains;
+     present_info->pSwapchains = swapchains;
+ 
++    for (const VkBaseInStructure *header = (const VkBaseInStructure *)present_info->pNext;
++         header; header = (const VkBaseInStructure *)header->pNext)
++    {
++        if (header->sType == VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_KHR)
++        {
++            VkSwapchainPresentFenceInfoKHR *info = (VkSwapchainPresentFenceInfoKHR *)header;
++
++            if (info->swapchainCount && info->pFences)
++            {
++                present_fences = malloc( info->swapchainCount * sizeof(*present_fences) );
++                if (!present_fences)
++                {
++                    if (swapchains != swapchains_buffer) free( swapchains );
++                    return VK_ERROR_OUT_OF_HOST_MEMORY;
++                }
++                for (uint32_t i = 0; i < info->swapchainCount; i++)
++                {
++                    struct fence *fence = fence_from_handle( info->pFences[i] );
++                    present_fences[i] = fence ? fence->obj.host.fence : VK_NULL_HANDLE;
++                }
++                info->pFences = present_fences;
++            }
++        }
++    }
++
+     for (uint32_t i = 0; i < present_info->swapchainCount; i++)
+     {
+         struct swapchain *swapchain = swapchain_from_handle( client_swapchains[i] );
+@@ -2026,6 +2052,8 @@
+ 
+     res = device->p_vkQueuePresentKHR( queue->host.queue, present_info );
+ 
++    if (present_fences) free( present_fences );
++
+     for (uint32_t i = 0; i < present_info->swapchainCount; i++)
+     {
+         struct swapchain *swapchain = swapchain_from_handle( client_swapchains[i] );

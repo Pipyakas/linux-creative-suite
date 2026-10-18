@@ -1,0 +1,25 @@
+diff --git a/dlls/winewayland.drv/wayland_surface.c b/dlls/winewayland.drv/wayland_surface.c
+index b32a43f..475b45a 100644
+--- a/dlls/winewayland.drv/wayland_surface.c
++++ b/dlls/winewayland.drv/wayland_surface.c
+@@ -1386,6 +1386,20 @@ struct client_surface *WAYLAND_CreateClientSurface(HWND hwnd, int pixel_format,
+     }
+     wl_surface_set_user_data(client->wl_surface, hwnd);
+ 
++    /* Tell the compositor the client surface is fully opaque. Without this
++       some compositors (e.g. KWin) treat the Vulkan swapchain surface as
++       alpha-blended, which leaves the window black for opaque swapchains. */
++    {
++        struct wl_region *opaque_region = wl_compositor_create_region(process_wayland.wl_compositor);
++        if (opaque_region)
++        {
++            wl_region_add(opaque_region, 0, 0, 0x7fffffff, 0x7fffffff);
++            wl_surface_set_opaque_region(client->wl_surface, opaque_region);
++            wl_surface_commit(client->wl_surface);
++            wl_region_destroy(opaque_region);
++        }
++    }
++
+     /* Let parent handle all pointer events. */
+     empty_region = wl_compositor_create_region(process_wayland.wl_compositor);
+     if (!empty_region)

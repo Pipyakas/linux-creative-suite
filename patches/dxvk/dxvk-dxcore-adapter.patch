@@ -1,0 +1,70 @@
+diff --git a/src/dxgi/dxgi_adapter.cpp b/src/dxgi/dxgi_adapter.cpp
+index 259c782..d338fb7 100644
+--- a/src/dxgi/dxgi_adapter.cpp
++++ b/src/dxgi/dxgi_adapter.cpp
+@@ -63,6 +63,8 @@ namespace dxvk {
+   : m_factory (factory),
+     m_adapter (adapter),
+     m_interop (this),
++    m_dxcore  (this),
++    m_wineAdapter (this),
+     m_index   (index),
+     m_desc    (GetAdapterDesc()),
+     m_destructionNotifier(this) {
+@@ -109,7 +111,22 @@ namespace dxvk {
+       *ppvObject = ref(&m_destructionNotifier);
+       return S_OK;
+     }
+-    
++
++    // On Windows a DXGI adapter is also a DXCore adapter; the suite's apps
++    // enumerate through DXGI and then query IDXCoreAdapter(1) on each adapter.
++    if (riid == IID_IDXCoreAdapter
++     || riid == IID_IDXCoreAdapter1) {
++      *ppvObject = ref(&m_dxcore);
++      return S_OK;
++    }
++
++    // Wine's builtin d3d12.dll needs this internal interface to accept a
++    // DXGI adapter; without it D3D12CreateDevice fails with E_NOINTERFACE.
++    if (riid == IID_IWineDXGIAdapter) {
++      *ppvObject = ref(&m_wineAdapter);
++      return S_OK;
++    }
++
+     if (logQueryInterfaceError(__uuidof(IDXGIAdapter), riid)) {
+       Logger::warn("DxgiAdapter::QueryInterface: Unknown interface query");
+       Logger::warn(str::format(riid));
+diff --git a/src/dxgi/dxgi_adapter.h b/src/dxgi/dxgi_adapter.h
+index 5f8f3e5..9e6ccf2 100644
+--- a/src/dxgi/dxgi_adapter.h
++++ b/src/dxgi/dxgi_adapter.h
+@@ -3,6 +3,7 @@
+ #include <mutex>
+ #include <unordered_map>
+ 
++#include "dxcore_adapter.h"
+ #include "dxgi_format.h"
+ #include "dxgi_interfaces.h"
+ #include "dxgi_output.h"
+@@ -111,6 +112,8 @@ namespace dxvk {
+     Com<DxgiFactory>  m_factory;
+     Rc<DxvkAdapter>   m_adapter;
+     DxgiVkAdapter     m_interop;
++    DxgiDXCoreAdapter m_dxcore;
++    DxgiWineAdapter   m_wineAdapter;
+ 
+     UINT              m_index = 0u;
+     UINT64            m_memReservation[2] = { 0, 0 };
+diff --git a/src/dxgi/meson.build b/src/dxgi/meson.build
+index a9ed5e7..be051f2 100644
+--- a/src/dxgi/meson.build
++++ b/src/dxgi/meson.build
+@@ -1,6 +1,7 @@
+ dxgi_res = wrc_generator.process('version.rc')
+ 
+ dxgi_src = [
++  'dxcore_adapter.cpp',
+   'dxgi_adapter.cpp',
+   'dxgi_enums.cpp',
+   'dxgi_factory.cpp',

@@ -1,0 +1,16 @@
+diff --git a/src/dxvk/dxvk_presenter.cpp b/src/dxvk/dxvk_presenter.cpp
+index f93ae8d..da5d619 100644
+--- a/src/dxvk/dxvk_presenter.cpp
++++ b/src/dxvk/dxvk_presenter.cpp
+@@ -41,8 +41,9 @@ namespace dxvk {
+     }
+ 
+     // KHR and EXT variants of this extension are completely identical
+-    m_hasSwapchainMaintenance1 = m_device->features().khrSwapchainMaintenance1.swapchainMaintenance1
+-                              || m_device->features().extSwapchainMaintenance1.swapchainMaintenance1;
++    // TEST: force-disable swapchain maintenance 1 to isolate whether
++    // its present-fence code path breaks presentation under Wine.
++    m_hasSwapchainMaintenance1 = false;
+ 
+     // Gamescope WSI is currently broken and doesn't properly signal
+     // the present fence if presentation is queued but fails.

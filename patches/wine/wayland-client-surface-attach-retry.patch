@@ -1,0 +1,33 @@
+diff --git a/dlls/winewayland.drv/wayland_surface.c b/dlls/winewayland.drv/wayland_surface.c
+index b32a43f..bf2491a 100644
+--- a/dlls/winewayland.drv/wayland_surface.c
++++ b/dlls/winewayland.drv/wayland_surface.c
+@@ -1452,6 +1452,9 @@ void wayland_client_surface_attach(struct wayland_client_surface *client, HWND t
+     }
+ 
+     wayland_surface_reconfigure_client(surface, client, rect);
++    /* Commit the child surface's state, even with no buffer, so the
++     * compositor learns about it before Mesa commits the first dmabuf. */
++    wl_surface_commit(client->wl_surface);
+     /* Commit to apply subsurface positioning. */
+     wl_surface_commit(surface->wl_surface);
+ 
+diff --git a/dlls/winewayland.drv/window.c b/dlls/winewayland.drv/window.c
+index 270fdfb..1fd2b76 100644
+--- a/dlls/winewayland.drv/window.c
++++ b/dlls/winewayland.drv/window.c
+@@ -833,6 +833,14 @@ void set_client_surface(HWND hwnd, struct wayland_client_surface *new_client)
+                 wayland_client_surface_attach(new_client, NULL, NULL);
+         }
+     }
++    else if (new_client && toplevel && visible &&
++             (!new_client->wl_subsurface || new_client->toplevel != toplevel))
++    {
++        /* The surface was recorded earlier, before its window (or its toplevel)
++         * was visible/available, so it was never attached to a subsurface.
++         * Retry the attachment now that we have a visible top-level. */
++        wayland_client_surface_attach(new_client, toplevel, &rect);
++    }
+ 
+     wayland_win_data_release(data);
+ }

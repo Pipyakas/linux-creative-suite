@@ -1,0 +1,19 @@
+--- a/libs/vkd3d/device.c
++++ b/libs/vkd3d/device.c
+@@ d3d12_device_determine_tiled_resources_tier @@
+     /* CAPABILITY OVERRIDE (documented, intentional): this hardware's Vulkan
+      * ICD reports sparseBinding=false, so vkd3d-proton would normally return
+      * NOT_SUPPORTED here and block feature level 12_0. The vendor's consumer
+      * code (the raster image editor and the GPU probe helper it ships) only
+      * performs a capability query at device creation and never exercises tiled
+      * resources, so reporting TIER_2 unblocks those apps on this box.
+      * Tiled-resource operations are NOT actually backed by hardware
+      * residency here and may fail if a caller tries them.
+      * See README.md in this directory */
+     if (!features->sparseBinding || !features->sparseResidencyAliased ||
+             !features->sparseResidencyBuffer || !features->sparseResidencyImage2D ||
+             !sparse_properties->residencyStandard2DBlockShape ||
+             !device->queue_families[VKD3D_QUEUE_FAMILY_SPARSE_BINDING] ||
+             !device->queue_families[VKD3D_QUEUE_FAMILY_SPARSE_BINDING]->queue_count)
+-        return D3D12_TILED_RESOURCES_TIER_NOT_SUPPORTED;
++        return D3D12_TILED_RESOURCES_TIER_2; /* CAPABILITY OVERRIDE */

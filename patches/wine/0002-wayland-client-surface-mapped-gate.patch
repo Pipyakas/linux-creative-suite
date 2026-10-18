@@ -1,0 +1,45 @@
+--- a/dlls/winewayland.drv/wayland_surface.c	2026-10-16 14:35:04.031890276 +0700
++++ b/dlls/winewayland.drv/wayland_surface.c	2026-10-16 14:35:07.177477963 +0700
+@@ -1273,13 +1273,15 @@
+     struct wayland_client_surface *surface = impl_from_client_surface(client);
+     HWND hwnd = client->hwnd, toplevel = client->toplevel;
+     struct wayland_win_data *data;
+-    BOOL visible = FALSE;
+ 
+     TRACE("%s\n", debugstr_client_surface(client));
+-    if(toplevel) visible = NtUserIsWindowVisible(hwnd);
+     if (!(data = wayland_win_data_get(hwnd))) return;
+ 
+-    if (toplevel && visible)
++    /* Do not treat an internally-visible-but-not-yet-wayland-mapped window as
++     * detached: the root window's wayland_surface being present is what lets a
++     * client subsurface be parented at all. Restricting on NtUserIsWindowVisible
++     * drops valid surfaces during startup/mapped transitions. */
++    if (toplevel && data->wayland_surface)
+         wayland_client_surface_attach(surface, toplevel, &client->monitor_rect);
+     else
+         wayland_client_surface_attach(surface, NULL, NULL);
+--- a/dlls/winewayland.drv/window.c	2026-10-16 14:35:04.033425615 +0700
++++ b/dlls/winewayland.drv/window.c	2026-10-16 14:35:07.178003300 +0700
+@@ -813,11 +813,9 @@
+     RECT rect = new_client->client.monitor_rect;
+     struct wayland_client_surface *old_client;
+     struct wayland_win_data *data;
+-    BOOL visible = FALSE;
+ 
+     /* ownership is shared with the callers, the last caller to release
+      * its reference will also destroy it and clear our pointer. */
+-    if(toplevel) visible = NtUserIsWindowVisible(hwnd);
+     if (!(data = wayland_win_data_get(hwnd))) return;
+ 
+     if (new_client != data->client_surface)
+@@ -827,7 +825,7 @@
+ 
+         if ((data->client_surface = new_client))
+         {
+-            if (toplevel && visible)
++            if (toplevel && data->wayland_surface)
+                 wayland_client_surface_attach(new_client, toplevel, &rect);
+             else
+                 wayland_client_surface_attach(new_client, NULL, NULL);
+---
