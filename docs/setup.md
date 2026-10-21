@@ -69,6 +69,13 @@ already current — to actually re-patch, move each app folder aside first and p
 `--reinstall CODES`. The script deletes the leftover `*.bak` files afterwards (scoped to the
 vendor trees; `--keep-baks` opts out).
 
+**The PDF editor installs separately.** Through the suite installer it fails twice: the base
+package returns `msiexec` 1639, and applying the shipped update package then returns 1603. Install
+that product's own MSI directly together with its bundled transform (`.mst`) instead. That
+succeeds and leaves it at its base build, which is the configuration verified in
+[status.md](status.md). `scripts/install.sh` does not automate this step; point the matching `APP_`
+entry at the executable it produces.
+
 ## Prefix configuration
 
 These are the settings that took the suite from "mostly black windows" to the state in
